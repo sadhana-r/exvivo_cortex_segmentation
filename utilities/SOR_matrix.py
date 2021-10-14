@@ -20,6 +20,8 @@ import numpy as np
 file = nib.load('/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/inputs/HNL29_18-L/seg_patch.nii.gz')
 img = file.get_fdata().astype(np.float32)
 
+#test github commit
+
 #Image shape
 img = np.pad(img, [(1,1),(1,1),(1,1)])
 h,w,d = img.shape
