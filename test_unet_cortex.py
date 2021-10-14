@@ -10,20 +10,13 @@ sys.path.append('./utilities')
 import config_cortex as config
 import torch
 import preprocess_data as p
-from unet_model import UNet
+from unet_model import UNet_wDeepSupervision
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import numpy as np
 import nibabel as nib
 import os.path as osp
 import os
-
-c = config.Config_Unet()
-dir_names = config.Config()
-
-def Net(num_class = 4):
-	net = UNet(num_class)
-	return net
 
 def computeGeneralizedDSC(gt, seg):
     
@@ -46,6 +39,9 @@ def generate_prediction(output):
     
     return preds, probability
 
+c = config.Config_BaselineUnet()
+dir_names = config.Setup_Directories()
+
 
 ## Set up GPU if available    
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -56,7 +52,7 @@ load_model = True
 
 #Set up directories
 root_dir = dir_names.root_dir
-experiment_name = "Experiment_14092020_2" #14072020 undersegments compared to Exp 3. 
+experiment_name = "Experiment_10012021_updateddata_ds_f32_lr1e4_250" #14072020 undersegments compared to Exp 3. 
 tfboard_dir = dir_names.tfboard_dir + '/' + experiment_name
 model_dir = dir_names.model_dir + '/' + experiment_name + '/'
 test_dir = dir_names.test_dir + '/' + experiment_name + '/'
@@ -72,8 +68,12 @@ if not load_model:
 test_dataset = p.ImageDataset(csv_file = c.final_test_csv)
 
 num_class = 4
-model_file = model_dir + 'model_5.pth'
-net = Net(num_class)
+unet_in_channels = 1
+unet_num_levels = 3
+unet_init_feature_numbers = 32
+model_file = model_dir + 'model.pth'
+net = UNet_wDeepSupervision(num_class = num_class, patch_size = c.segsize,in_channels = unet_in_channels,
+                                num_levels = unet_num_levels,init_feature_number = unet_init_feature_numbers, padding = False)
 net.load_state_dict(torch.load(model_file, map_location=device))
 net.eval()
 net.to(device)
@@ -84,7 +84,7 @@ with torch.no_grad():
     for i in range(0,len(test_dataset)):
         
         sample = test_dataset[i]
-        test_patches = p.GeneratePatches(sample, is_training = False, transform =False)
+        test_patches = p.GeneratePatches(sample, patch_size = c.segsize, is_training = False, transform = False, include_second_chan = False)
         
         testloader = DataLoader(test_patches, batch_size = c.batch_size, shuffle = False, num_workers = c.num_thread)    
         image_id = sample['id']
@@ -106,8 +106,9 @@ with torch.no_grad():
                 seg = patch_batched['seg'].to(device)
                 cpts = patch_batched['cpt']
                 
-                output = net(img)
-                probability = F.softmax(output, dim = 1).cpu().numpy()
+#                output, predictions = net(img)
+                output, predictions, ds_outputs = net(img)
+                probability = predictions.cpu().numpy()
                 
                 #Crop the patch to only use the center part
                 #probability = probability[:,:,c.patch_crop_size:-c.patch_crop_size,c.patch_crop_size:-c.patch_crop_size,c.patch_crop_size:-c.patch_crop_size]

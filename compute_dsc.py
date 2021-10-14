@@ -5,7 +5,12 @@ Created on Mon Sep 14 11:33:36 2020
 
 @author: sadhana-ravikumar
 """
-import SimpleITK as sitk
+import nibabel as nib
+import sys
+sys.path.append('./utilities')
+import preprocess_data as p
+import numpy as np
+
 
 def computeGeneralizedDSC(gt, seg):
     
@@ -16,18 +21,31 @@ def computeGeneralizedDSC(gt, seg):
      
      return gdsc
 
-val_dir = '/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/validation_output/'
-#exp_dir = 'Experiment_23072020_pulks/'
-exp_dir = 'Experiment 5/'
-#exp_dir = 'Experiment_14082020_MGNet/'
-predicted_seg = 'seg_3918'
-input_dir = '/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/inputs/'
-#gt_seg = 'HNL39_18-R/HNL39_18-R_trimmed_phg.nii.gz'
-#gt = sitk.GetArrayFromImage(sitk.ReadImage(input_dir+gt_seg))
-#seg = sitk.GetArrayFromImage(sitk.ReadImage(val_dir + exp_dir + predicted_seg))
-#
-#dsc = computeGeneralizedDSC(gt,seg)
-#print(dsc)
+root_dir = "/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet"
+train_val_csv = root_dir + "/data_csv/split.csv" 
+exp_dir = 'Experiment_060120201_updateddata/'
+val_dir = root_dir + '/validation_output/' + exp_dir
 
-img =input_dir+'HNL39_18-R/HNL39_18-R_trimmed_img.nii.gz'
-image1=sitk.GetArrayFromImage(sitk.ReadImage(img))
+input_dir = root_dir + '/inputs/'
+
+
+image_dataset = p.ImageDataset(csv_file = train_val_csv)
+
+dsc_list = []
+for i in range(1,len(image_dataset)):
+        sample = image_dataset[i]
+        if(sample['type'] == 'test'):
+        
+            image_id = sample['id']
+            seg = sample['seg']
+            print(image_id)
+            predicted_segfile = val_dir + 'seg_' + str(image_id) + ".0.nii.gz" 
+            pred_seg =  nib.load(predicted_segfile)
+            pred_seg = pred_seg.get_fdata().astype(np.float32)
+            
+            dsc = computeGeneralizedDSC(seg,pred_seg)
+            dsc_list.append(dsc)
+ 
+print("Average srlm validation accuracy is ", sum(dsc_list)/len(dsc_list))
+print(dsc_list)
+print("Standard deviation is ", np.std(dsc_list))

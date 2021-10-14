@@ -8,6 +8,7 @@ Created on Wed Jan  8 12:12:14 2020
 
 import numpy as np
 from scipy.ndimage import map_coordinates, gaussian_filter
+import random
 
 # This function generate center points in order of image. Just to keep the API consistent
 def grid_center_points(shape, space):
@@ -93,9 +94,24 @@ def Normalize(image, min_value=0, max_value=1):
 
 
 # Random transform
+def RandomRotate90(image,seg, second_chan = None, patch_size=64):
+    """
+    Randomly rotate an image
+    """
+    image = np.reshape(image, (patch_size, patch_size, patch_size))
+    seg = np.reshape(seg, (patch_size, patch_size, patch_size))
+    k = random.randint(0, 4)
+    image_rot = np.rot90(image, k, (1, 2))
+    seg_rot = np.rot90(seg, k, (1, 2))
+    
+    if second_chan is None:
+        return image_rot, seg_rot
+    else:
+        second_chan_rot = np.rot90(second_chan, k, (1, 2))
+        return image_rot, seg_rot, second_chan_rot
+        
 
-
-def elastic_deformation(img, seg = None, alpha=15, sigma=3):
+def elastic_deformation(img, seg = None, second_chan = None, alpha=15, sigma=3):
 	"""
 	Elastic deformation of 2D or 3D images on a pixelwise basis
 	X: image
@@ -129,11 +145,15 @@ def elastic_deformation(img, seg = None, alpha=15, sigma=3):
 		raise ValueError("can't deform because the image is not either 2D or 3D")
 
 	if seg is None:
-		return map_coordinates(img, indices, order=3).reshape(shape), None
+		if second_chan is None:
+ 			return map_coordinates(img, indices, order=3).reshape(shape), None
 	else:
-		return map_coordinates(img, indices, order=3).reshape(shape), map_coordinates(seg, indices, order=0).reshape(shape)
-    
-    
+		if second_chan is None:
+			return map_coordinates(img, indices, order=3).reshape(shape), map_coordinates(seg, indices, order=0).reshape(shape)
+		else:
+			return map_coordinates(img, indices, order=3).reshape(shape), map_coordinates(seg, indices, order=0).reshape(shape), map_coordinates(second_chan, indices, order=3).reshape(shape)
+
+
 def RandomFlip(image, image_label):
 	"""
 	Randomly flips the image across the given axes.

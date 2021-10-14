@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Jan 28 14:35:04 2021
+
+@author: sadhana-ravikumar
+"""
+import sys
+sys.path.append('/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/scripts/utilities/crf_rnn/CRFasRNNLayer/permutohedral_lattice')
+import torch
+import torch.nn as nn
+import lattice_filter_op_loader
+
+module = lattice_filter_op_loader.module
+
+class DenseCRFParams(object):
+    """
+    Parameters for the DenseCRF model
+    """
+
+    def __init__(
+        self,
+        alpha=160.0,
+        beta=3.0,
+        gamma=3.0,
+        spatial_ker_weight=3.0,
+        bilateral_ker_weight=5.0,
+    ):
+        """
+        Default values were taken from https://github.com/sadeepj/crfasrnn_keras. More details about these parameters
+        can be found in https://arxiv.org/pdf/1210.5644.pdf
+        Args:
+            alpha:                  Bandwidth for the spatial component of the bilateral filter
+            beta:                   Bandwidth for the color component of the bilateral filter
+            gamma:                  Bandwidth for the spatial filter
+            spatial_ker_weight:     Spatial kernel weight
+            bilateral_ker_weight:   Bilateral kernel weight
+        """
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.spatial_ker_weight = spatial_ker_weight
+        self.bilateral_ker_weight = bilateral_ker_weight
+        
+class CRF_RNN(nn.Module):
+    """
+    PyTorch implementation of the CRF-RNN module described in the paper:
+    Conditional Random Fields as Recurrent Neural Networks,
+    S. Zheng, S. Jayasumana, B. Romera-Paredes, V. Vineet, Z. Su, D. Du, C. Huang and P. Torr,
+    ICCV 2015 (https://arxiv.org/abs/1502.03240).
+    """
+
+    def __init__(self, num_class = 5, num_iterations=5, crf_init_params=None):
+        """
+        Create a new instance of the CRF-RNN layer.
+        Args:
+            num_labels:         Number of semantic labels in the dataset
+            num_iterations:     Number of mean-field iterations to perform
+            crf_init_params:    CRF initialization parameters
+        """
+        super(CRF_RNN, self).__init__()
+
+        if crf_init_params is None:
+            crf_init_params = DenseCRFParams()
+
+        self.params = crf_init_params
+        self.num_iterations = num_iterations
+
+        self._softmax = torch.nn.Softmax(dim=1)
+
+        self.num_class = num_class
+
+        # --------------------------------------------------------------------------------------------
+        # --------------------------------- Trainable Parameters -------------------------------------
+        # --------------------------------------------------------------------------------------------
+
+        # Spatial kernel weights
+        self.spatial_ker_weights = nn.Parameter(
+            crf_init_params.spatial_ker_weight
+            * torch.eye(num_class, dtype=torch.float32)
+        )
+
+        # Bilateral kernel weights
+        self.bilateral_ker_weights = nn.Parameter(
+            crf_init_params.bilateral_ker_weight
+            * torch.eye(num_class, dtype=torch.float32)
+        )
+
+        # Compatibility transform matrix
+        self.compatibility_matrix = nn.Parameter(
+            torch.eye(num_class, dtype=torch.float32)
+        )
+
+    def forward(self, image, logits):
+        """
+        Perform CRF inference.
+        Args:
+            image:  Tensor of shape (N, 1, h, w, d) containing the intensity image
+            logits: Tensor of shape (N, num_class, h, w,d) containing the unary logits
+        Returns:
+            log-Q distributions (logits) after CRF inference
+        """
+#
+        cur_logits = logits
+        n,c,h,w,d = image.shape
+
+        for _ in range(self.num_iterations):
+            
+            # Normalization
+            q_values = self._softmax(cur_logits)
+
+            #M = 2
+            # Spatial filtering
+            spatial_out = module.lattice_filter(q_values, image, bilateral = False, theta_gamma = self.params.gamma)
+
+            # Bilateral filtering
+            bilateral_out = module.lattice_filter(q_values, image, bilateral=True, 
+                                                  theta_alpha=self.params.alpha,theta_beta= self.params.beta)
+            
+            #Permute filter outputs such that channel (num_class) is the last dimension (i.e. N.H.W.D.C)
+            spatial_out = spatial_out.permute(0,2,3,4,1)
+            bilateral_out = bilateral_out.permute(0,2,3,4,1)
+            
+            # Weighting filter outputs
+            message_passing = torch.mm(self.spatial_ker_weights, spatial_out.view(-1, self.num_class).tranpose) + \
+                              torch.mm(self.bilateral_ker_weights, bilateral_out.view(-1, self.num_class).transpose)
+                              
+
+            # Compatibility transform and reshape image
+            msg_passing_out = torch.mm(self.compatibility_matrix, message_passing).transpose.view(n,h,w,d,c).permute(0,4,1,2,3)
+
+            # Adding unary potentials
+            cur_logits = logits - msg_passing_out
+
+        return cur_logits
+    
+input_image =torch.randn(2,1, 96,96,96)
+logit =torch.randn(2,5, 96,96,96)
+crf_rnn = CRF_RNN(num_class = 5)
+logit = crf_rnn(input_image, logit)

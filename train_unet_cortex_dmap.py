@@ -9,7 +9,7 @@ import sys
 sys.path.append('./utilities')
 sys.path.append('./utilities/pulkit')
 
-from unet_model import UNet, MGNet, UNet_wDeepSupervision
+from unet_model import UNet_wDeepSupervision, UNet_DistanceRecon, MGNet, UNet_SOR
 import numpy as np
 import config_cortex as config
 from torch.utils.data import DataLoader
@@ -94,21 +94,33 @@ def generate_prediction(output):
     _, preds_tensor = torch.max(probability, 1)
     
     return preds_tensor, probability
-    
-def plot_images_to_tfboard(img, seg, output, step, is_training = True, num_image_to_show = 1):
+
+def Normalize(image, min_value=0, max_value=1):
+	"""
+	chnage the intensity range
+	"""
+	value_range = max_value - min_value
+	normalized_image = (image - torch.min(image)) * (value_range) / (torch.max(image) - torch.min(image))
+	normalized_image = normalized_image + min_value
+	return normalized_image
+
+def plot_images_to_tfboard(img, seg, output, dmap, step, is_training = True, num_image_to_show = 3):
     
     preds, probability = generate_prediction(output)
     i = 0
     if is_training:
 #        for i in range(num_image_to_show):
-            writer.add_image('Training/Intensity images/'+str(i), img[i,:,:,:,24], global_step = step)
+            img_slice = img[i,:,:,:,24]
+            writer.add_image('Training/Intensity images/'+str(i),Normalize(img_slice), global_step = step)
             writer.add_image('Training/Ground Truth seg/'+ str(i), color_transform(seg[i,None,:,:,24]), global_step = step)
             writer.add_image('Training/Predicted seg/'+ str(i), color_transform(preds[i,None,:,:,24]), global_step = step)
+            writer.add_image('Training/Predicted Distance Map/'+str(i), dmap[i,None,:,:,24], global_step = step)
     else:
 #        for i in range(num_image_to_show):
             writer.add_image('Validation/Intensity images/'+str(i), img[i,:,:,:,24], global_step = step)
             writer.add_image('Validation/Ground Truth seg/'+ str(i), color_transform(seg[i,None,:,:,24]), global_step = step)
             writer.add_image('Validation/Predicted seg/'+ str(i), color_transform(preds[i,None,:,:,24]), global_step = step)
+            writer.add_image('Training/Predicted Distance Map/'+str(i), dmap[i,None,:,:,24], global_step = step)
 
 def center_crop(layer, target_size):
     # only four elements since channels is 1
@@ -119,8 +131,7 @@ def center_crop(layer, target_size):
     return layer[
         :, diff_y : (diff_y + target_size[0]), diff_x : (diff_x + target_size[1]),  diff_z : (diff_z + target_size[2])
     ]
-        
-       
+               
 c = config.Config_BaselineUnet()
 dir_names = config.Setup_Directories()
 
@@ -129,14 +140,14 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 #Set up directories
 root_dir = dir_names.root_dir
-experiment_name = 'Experiment_10012021_dmap_secondchan_250_fixedaug'
+experiment_name = 'Experiment_03112021_dmap_reconstruction_SOR'
 tfboard_dir = dir_names.tfboard_dir + '/' + experiment_name
 model_dir = dir_names.model_dir + '/' + experiment_name + '/'
 output_dir = dir_names.valout_dir + '/' + experiment_name + '/'
 model_file = model_dir + 'model.pth'
  
 #Network properties
-num_class = 4
+num_class = 5
 generate_uncertainty = False
 num_groups = 4
 unet_num_levels = 3
@@ -161,22 +172,21 @@ if not load_model:
         net = MGNet(num_class = num_class, num_groups = num_groups)
         net = net.to(device)
     else:
-#        net = UNet(num_class = num_class, padding = False, num_levels = 3, init_feature_number = 64)
-        net = UNet_wDeepSupervision(num_class = num_class, patch_size = c.segsize, in_channels = unet_in_channels,
+        #net = UNet(num_class = num_class, padding = False, num_levels = 3, init_feature_number = 64)
+        net = UNet_SOR(num_class = num_class, patch_size = c.segsize, in_channels = unet_in_channels,
                                     num_levels = unet_num_levels,init_feature_number = unet_init_feature_numbers, padding = False)
         net = net.to(device)
 else:
-    #net=Unet3D_meta_learning.Net(num_classes = num_class)
-    net = UNet_wDeepSupervision(num_class = num_class, patch_size = c.segsize,in_channels = unet_in_channels,
+    net = UNet_SOR(num_class = num_class, patch_size = c.segsize,in_channels = unet_in_channels,
                                 num_levels = unet_num_levels,init_feature_number = unet_init_feature_numbers, padding = False)
-#    net = UNet(num_class = num_class, padding = False, num_levels = 4, init_feature_number = 64)
+    #net = UNet(num_class = num_class, padding = False, num_levels = 4, init_feature_number = 64)
     net.load_state_dict(torch.load(model_file, map_location = torch.device(device)))
     net = net.to(device)
     net.eval()
 
-print(net)
+
 #Initialize class to convert labels to color images
-color_transform = Colorize()
+color_transform = Colorize(n = num_class)
     
 # Set up tensor board
 writer = SummaryWriter(tfboard_dir)
@@ -189,11 +199,12 @@ alpha = alpha.to(device)
 weights = torch.ones(num_class)
 weights[0] = 0
 weights = weights.to(device)
-#ignore_index?
+
 #criterion = l.GeneralizedDiceLoss(num_classes=num_class, weight = weights)
-criterion = l.DSCLoss_deepsupervision(weights, alpha = alpha, num_classes = num_class)
-#criterion = torch.nn.CrossEntropyLoss(weights)
-#criterion = l.CELoss_deepsupervision(weights)
+seg_criterion = l.DSCLoss_deepsupervision(weights, alpha = alpha, num_classes = num_class)
+recon_criterion = l.ReconstructionLoss()
+recon_weight = 100 #1e6
+seg_weight = 1
 
 # Optimizer and learning rate
 optimizer = optim.Adam(net.parameters(), lr = c.learning_rate, weight_decay = c.weight_decay)
@@ -221,13 +232,6 @@ if os.path.exists(dir_names.val_patch_csv):
 for i in range(len(image_dataset)):
     sample = image_dataset[i]
     
-#     # If I want to include a prior
-#    if include_second_chan:
-#        dmap = sample['second_chan']
-#        # randomly distort segmentation to simulate "warped template"       
-#    else:
-#        dmap = None
-     
     if(sample['type'] == 'train'):
         print(sample['type'])
         patches = p.GeneratePatches(sample, patch_size = c.segsize, is_training = True, transform = True, include_second_chan= include_second_chan)
@@ -235,16 +239,14 @@ for i in range(len(image_dataset)):
         patches = p.GeneratePatches(sample, patch_size = c.segsize, is_training = True, transform = False, include_second_chan = include_second_chan)
 
 PATCH GENERATION UP TO HERE
-"""      
- 
+"""     
 ###Now create a dataset with the patches
 train_dataset = p.PatchDataset(dir_names.train_patch_csv, include_second_chan)
 val_dataset = p.PatchDataset(dir_names.val_patch_csv, include_second_chan)
 
-
 # Training loop
-training_loss = 0.0
-
+seg_loss = 0.0
+recon_loss = 0.0
 for epoch in range(c.num_epochs):
     
     
@@ -254,42 +256,49 @@ for epoch in range(c.num_epochs):
         
         img = patch_batched['image'][:,None,...].to(device)
         seg = patch_batched['seg'].to(device)
+        distance_map = patch_batched['dmap'].to(device)
                 
         #Zero the parameter gradients
         optimizer.zero_grad()
 
-        if generate_uncertainty:
-            output_list = net(img)
-            
-            loss_uncertain = 0
-            for output in output_list:
-                loss_uncertain += criterion(output, seg.long())
-            loss = loss_uncertain/num_groups
-                
-            ouput = torch.mean(torch.stack(output_list), axis = 0)
-            uncertainty =  (torch.std(torch.stack(output_list), axis = 0))**2
-        else:
-             # forward + backward + optimize
-#             output,_ = net(img)
-             output,_,ds_outputs = net(img)
+        output,_,ds_outputs, dmap_output = net(img)
              
              ## With no padding, need to crop label
-             seg = center_crop(seg,output.shape[2:])
-             loss = criterion(output,ds_outputs, seg.long())
-#             loss = criterion(output, seg.long())
+        seg = center_crop(seg,output.shape[2:])
+        distance_map = center_crop(distance_map,output.shape[2:])
+             
+        #Squeezing prediction of dmap so don't need to squeeze ground truth. Only works for batch size of 1
+        if epoch <= 5:
+            
+            seg_loss = seg_criterion(output,ds_outputs, seg.long())
+            loss = seg_loss
+        else:
+            seg_loss = seg_weight*seg_criterion(output,ds_outputs, seg.long())
+            recon_loss = recon_weight*recon_criterion(dmap_output,distance_map, seg)
+            loss = seg_loss + recon_loss
+            recon_loss += recon_loss.item()
              
         loss.backward()
         optimizer.step()
         
-        training_loss += loss.item()
+        seg_loss += seg_loss.item()
 
         if j % 5 == 4: #print every 5 batches
             #Plot images
-            plot_images_to_tfboard(img, seg, output, epoch*len(trainloader) + j,
-                                   is_training = True, num_image_to_show = c.num_image_to_show)            
-            print('Training loss: [epoch %d,  iter %5d] loss: %.3f lr: %.5f' %(epoch +1, j+1, training_loss/5, scheduler.get_lr()[0]))
-            writer.add_scalar('training_loss', training_loss/5, epoch*len(trainloader) + j)
-            training_loss = 0.0
+            plot_images_to_tfboard(img, seg, output, dmap_output,epoch*len(trainloader) + j,
+                                   is_training = True, num_image_to_show = c.num_image_to_show)  
+            if epoch <= 5:
+                print('Training loss: [epoch %d,  iter %5d] seg_loss: %.3f lr: %.5f' 
+                      %(epoch +1, j+1, seg_loss/5, scheduler.get_last_lr()[0]))
+                writer.add_scalar('Segmentation_loss', seg_loss/5, epoch*len(trainloader) + j)
+                seg_loss = 0.0
+            else:
+                print('Training loss: [epoch %d,  iter %5d] seg_loss: %.3f recon_loss: %.3f lr: %.5f' 
+                      %(epoch +1, j+1, seg_loss/5, recon_loss/5, scheduler.get_last_lr()[0]))
+                writer.add_scalar('Segmentation_loss', seg_loss/5, epoch*len(trainloader) + j)
+                writer.add_scalar('Recon_loss', recon_loss/5, epoch*len(trainloader) + j)
+                seg_loss = 0.0
+                recon_loss = 0.0
             
     
     ## Validation    
@@ -304,30 +313,18 @@ for epoch in range(c.num_epochs):
         for j, patch_batched in enumerate(valloader):
                            
             img = patch_batched['image'][:,None,...].to(device)
-            img = patch_batched['image'].permute(0,4,1,2,3).to(device) #- with generatedeepmedic patches
+#            img = patch_batched['image'].permute(0,4,1,2,3).to(device) #- with generatedeepmedic patches
             seg = patch_batched['seg'].to(device)
-
-#            output,_ = net(img) # Pulkit's code outputs w and /wo soft max
+            distance_map = patch_batched['dmap'].to(device)
             
-            if generate_uncertainty:
-                
-                output_list = net(img)                
-                loss_uncertain = 0
-                for output in output_list:
-                    loss_uncertain += criterion(output, seg.long())
-                loss = loss_uncertain/num_groups
-                    
-                ouput = torch.mean(torch.stack(output_list), axis = 0)
-                uncertainty =  (torch.std(torch.stack(output_list), axis = 0))**2
-            else:
-                 # forward + backward + optimize
-#                 output,_,ds_outputs = net(img)
-#                 loss = criterion(output,ds_outputs, seg.long())
-#                 output,_= net(img)
-                 output,_,ds_outputs = net(img)
-                 seg = center_crop(seg,output.shape[2:])
-#                 loss = criterion(output,seg.long())
-                 loss = criterion(output,ds_outputs, seg.long())
+            output,_,ds_outputs, dmap_output = net(img)
+            seg = center_crop(seg,output.shape[2:])
+            distance_map = center_crop(distance_map,output.shape[2:])
+             
+            seg_loss = seg_weight*seg_criterion(output,ds_outputs, seg.long())
+            recon_loss = recon_weight*recon_criterion(dmap_output,distance_map, seg)
+             
+            loss = seg_loss + recon_loss
              
             
             pred, probability = generate_prediction(output)
@@ -341,7 +338,7 @@ for epoch in range(c.num_epochs):
             
             if j % 5 == 4: #print every 5 batches
             #Plot images
-                plot_images_to_tfboard(img, seg, output, epoch*len(valloader) + j, 
+                plot_images_to_tfboard(img, seg, output, dmap_output, epoch*len(valloader) + j, 
                                        is_training = False,num_image_to_show = c.num_image_to_show)            
 
      
@@ -369,7 +366,7 @@ writer.close()
 pad_size = c.half_patch[0]
 gdsc_val = []
 with torch.no_grad():
-    for i in range(len(image_dataset)):
+    for i in range(21,len(image_dataset)):
         print(i)
         sample = image_dataset[i]
         if(sample['type'] == 'test'):
@@ -377,11 +374,7 @@ with torch.no_grad():
             image_id = sample['id']
             print("Generating test patches for ", image_id )
             
-            if include_second_chan:
-                dmap = sample['second_chan']
-                test_patches = p.GeneratePatches(sample, patch_size = c.test_patch_size, is_training = False, transform =False, second_chan = dmap)
-            else:
-                test_patches = p.GeneratePatches(sample, is_training = False, transform =False, second_chan = None)     
+            test_patches = p.GeneratePatches(sample, patch_size = c.test_patch_size, is_training = False, transform =False, include_second_chan = include_second_chan)  
             
             testloader = DataLoader(test_patches, batch_size = c.batch_size, shuffle = False, num_workers = c.num_thread)    
             
@@ -392,37 +385,24 @@ with torch.no_grad():
             im_shape_pad = [x + pad_size*2 for x in image_shape]
             prob = np.zeros([num_class] + list(im_shape_pad))
             rep = np.zeros([num_class] + list(im_shape_pad))
+            dmap = np.zeros(list(im_shape_pad))
             uncertainty_map = np.zeros([num_class] + list(im_shape_pad))
             
             pred_list = []
             for j, patch_batched in enumerate(testloader):
                 
                     print("batch", j)                
-                    img = patch_batched['image'][:,None,...].to(device).squeeze(1)
+                    img = patch_batched['image'][:,None,...].to(device)
                     seg = patch_batched['seg'].to(device)
                     cpts = patch_batched['cpt']
                     
                     
-                    if generate_uncertainty:
-                
-                        output_list = net(img)                
-                        loss_uncertain = 0
-                        for output in output_list:
-                            loss_uncertain += criterion(output, seg.long())
-                        loss = loss_uncertain/num_groups
-                            
-                        output = torch.stack(output_list)
-                        probability_group = F.softmax(output, dim = 2)
-                        probability = torch.mean(probability_group, axis = 0).cpu().numpy()
-                        uncertainty =  ((torch.std(probability_group, axis = 0))**2).cpu().numpy()
-                       # uncertainty = uncertainty.cpu().numpy()
-                    else:
-                         output, predictions, ds_outputs = net(img)
+                    output, predictions, ds_outputs, dmap_output = net(img)
 #                         loss = criterion(output, ds_outputs, seg.long())        
 #                         output, predictions = net(img)
 #                         seg = center_crop(seg,output.shape[2:])
 #                         loss = criterion(output, seg.long()) 
-                         probability = predictions.cpu().numpy()
+                    probability = predictions.cpu().numpy()
                     
                     #Crop the patch to only use the center part
 #                    probability = probability[:,:,c.patch_crop_size:-c.patch_crop_size,c.patch_crop_size:-c.patch_crop_size,c.patch_crop_size:-c.patch_crop_size]
@@ -436,11 +416,12 @@ with torch.no_grad():
                     hs, ws, ds = half_shape
                     
                     #for cpt, pred, uncert in zip(list(cpts), list(probability), list(uncertainty)):
-                    for cpt, pred in zip(list(cpts), list(probability)):
+                    for cpt, pred, dmap_pred in zip(list(cpts), list(probability),list(dmap_output)):
 #                        print(cpt)
 #                        print(pred.shape)
                         #if np.sum(pred)/hs/ws/ds < 0.1:
                         prob[:,cpt[0] - hs:cpt[0] + hs, cpt[1] - ws:cpt[1] + ws, cpt[2] - ds:cpt[2] + ds] += pred
+                        dmap[cpt[0] - hs:cpt[0] + hs, cpt[1] - ws:cpt[1] + ws, cpt[2] - ds:cpt[2] + ds] += dmap_pred.squeeze().cpu().numpy()
                         rep[:,cpt[0] - hs:cpt[0] + hs, cpt[1] - ws:cpt[1] + ws, cpt[2] - ds:cpt[2] + ds] += 1
                         #uncertainty_map[:,cpt[0] - hs:cpt[0] + hs, cpt[1] - ws:cpt[1] + ws, cpt[2] - ds:cpt[2] + ds] += uncert
                                     
@@ -448,16 +429,20 @@ with torch.no_grad():
                     
              #Crop the image since we added padding when generating patches
             prob = prob[:,pad_size:-pad_size, pad_size:-pad_size,pad_size:-pad_size]
+            dmap = dmap[pad_size:-pad_size, pad_size:-pad_size,pad_size:-pad_size]
             rep = rep[:,pad_size:-pad_size,pad_size:-pad_size,pad_size:-pad_size]
             #uncertainty_map = uncertainty_map[:,pad_size:-pad_size, pad_size:-pad_size,pad_size:-pad_size]
             #rep[rep==0] = 1e-6
         
             # Normalized by repetition
             prob = prob/rep
+            dmap = dmap/rep[0,:,:,:].squeeze()
+        
             #uncertainty_map = uncertainty_map/rep
             
             seg_pred = np.argmax(prob, axis = 0).astype('float')
             prob = np.moveaxis(prob,0,-1)
+#            dmap = np.moveaxis(dmap,0,-1)
             #uncertainty_map = np.moveaxis(uncertainty_map,0,-1)
             
             gdsc = computeGeneralizedDSC(sample['seg'], seg_pred)
@@ -466,6 +451,7 @@ with torch.no_grad():
             
             nib.save(nib.Nifti1Image(prob, affine), osp.join(output_dir, "prob_" + str(image_id) + ".nii.gz"))
             nib.save(nib.Nifti1Image(seg_pred, affine), osp.join(output_dir, "seg_" + str(image_id)+".nii.gz" ))
+            nib.save(nib.Nifti1Image(dmap, affine), osp.join(output_dir, "dmap_" + str(image_id)+".nii.gz" ))
     #nib.save(nib.Nifti1Image(uncertainty_map, affine), osp.join(output_dir, "uncertanity_" + str(image_id) + ".nii.gz" ))
             
             print("Done!")

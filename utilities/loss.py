@@ -20,10 +20,29 @@ def flatten(tensor):
 # Set up GPU if available    
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+class ReconstructionLoss(nn.Module):
+    def __init__(self,weight = None):
+        super(ReconstructionLoss, self).__init__()
+        
+        self.weight = weight
+
+    def forward(self, input, target, seg):
+        
+        idx_include = (seg >= 1) & (seg < 4)
+#        idx_include = (seg > 2) | (target > 0)
+        target_mask = target[idx_include]
+        input_mask = input[idx_include]
+        #mean square loss
+        loss = torch.sum((input_mask - target_mask)**2)/len(input_mask)
+        
+        return loss
+    
+    
 class GeneralizedDiceLoss(nn.Module):
 
-    def __init__(self, epsilon=1e-5, weight=None, num_classes=2, ignore_index = None):
+    def __init__(self, epsilon=1e-5, weight=None, num_classes=2, ignore_index = None): 
         super(GeneralizedDiceLoss, self).__init__()
+        
         self.epsilon = epsilon
         self.register_buffer('weight', weight)
         self.ignore_index = ignore_index
@@ -31,6 +50,7 @@ class GeneralizedDiceLoss(nn.Module):
         self.normalization = nn.Softmax(dim=1)
 
     def forward(self, input, target):
+        
         input = self.normalization(input)
 
         def get_one_hot_image(target):
@@ -65,3 +85,46 @@ class GeneralizedDiceLoss(nn.Module):
         loss = 1. - 2. * intersect / denominator.clamp(min=self.epsilon)
 
         return loss
+    
+class CELoss_deepsupervision(nn.Module):
+    
+    def __init__(self, weights):
+        super(CELoss_deepsupervision, self).__init__()
+        
+        self.weights = weights
+        self.CELoss = torch.nn.CrossEntropyLoss(self.weights)
+
+    def forward(self, input, deep_inputs, target):
+        
+        alpha = [0.25,0.5,0.75,1]
+        total_loss = 0
+        for i in range(0,len(deep_inputs)-1):
+            loss = self.CELoss(deep_inputs[i], target)
+            total_loss += alpha[i]*loss
+        # last layer
+        total_loss += alpha[3]*self.CELoss(input,target)
+            ## Just add weight decay for regularization?
+
+        return total_loss
+
+class DSCLoss_deepsupervision(nn.Module):
+    
+    def __init__(self, weights, alpha, num_classes):
+        super(DSCLoss_deepsupervision, self).__init__()
+        
+        self.weights = weights
+        self.alpha = alpha
+        self.GeneralizedDSCLoss = GeneralizedDiceLoss(num_classes=num_classes, weight = weights)
+        
+    def forward(self, input, deep_inputs, target):
+        
+        alpha = self.alpha
+        total_loss = 0
+        for i in range(0,len(deep_inputs)-1):
+            loss = self.GeneralizedDSCLoss(deep_inputs[i], target)
+            total_loss += alpha[i]*loss
+        # last layer
+        total_loss += alpha[-1]*self.GeneralizedDSCLoss(input,target)
+            ## Just add weight decay for regularization?
+
+        return total_loss
