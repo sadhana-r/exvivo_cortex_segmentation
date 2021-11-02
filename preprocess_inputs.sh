@@ -2,16 +2,16 @@
 #$ -S /bin/bash
 set -x -e
 
-#ROOT="/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/exvivo_mtl_unet"
-ROOT='/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet'
+ROOT="/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/exvivo_mtl_unet"
+#ROOT='/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet'
 
 
-INPUTS="$ROOT/preproc_all_27"
+INPUTS="$ROOT/inputs"
 DATADIR="$ROOT/data_csv"
 CODEDIR="$ROOT/code"
 
-SUBJ_TXT=$ROOT/subj_train_fold1.txt
-IND_ALL="$(cat "$SUBJ_TXT")"
+#SUBJ_TXT=$ROOT/subj_train_fold1.txt
+#IND_ALL="$(cat "$SUBJ_TXT")"
 
 function main()
 {
