@@ -22,9 +22,20 @@ import nibabel as nib
 import os.path as osp
 import os
 import loss as l
+import math
+import shutil
 
 #Try Pulkit's code
 #import Unet3D_meta_learning
+
+def Normalize(image, min_value=0, max_value=1):
+	"""
+	change the intensity range
+	"""
+	value_range = max_value - min_value
+	normalized_image = (image - torch.min(image)) * (value_range) / (torch.max(image) - torch.min(image))
+	normalized_image = normalized_image + min_value
+	return normalized_image
 
 def colormap(n):
     cmap=np.zeros([n, 3]).astype(np.uint8)
@@ -95,17 +106,19 @@ def generate_prediction(output):
     
     return preds_tensor, probability
     
-def plot_images_to_tfboard(img, seg, output, step, is_training = True, num_image_to_show = 1):
+def plot_images_to_tfboard(img, seg, output, step, is_training = True, num_image_to_show = 3):
     
     preds, probability = generate_prediction(output)
-    i = 0
+    
+    img = Normalize(img, max_value = 255)
+#    i = 0
     if is_training:
-#        for i in range(num_image_to_show):
+       for i in range(num_image_to_show):
             writer.add_image('Training/Intensity images/'+str(i), img[i,:,:,:,24], global_step = step)
             writer.add_image('Training/Ground Truth seg/'+ str(i), color_transform(seg[i,None,:,:,24]), global_step = step)
             writer.add_image('Training/Predicted seg/'+ str(i), color_transform(preds[i,None,:,:,24]), global_step = step)
     else:
-#        for i in range(num_image_to_show):
+        for i in range(num_image_to_show):
             writer.add_image('Validation/Intensity images/'+str(i), img[i,:,:,:,24], global_step = step)
             writer.add_image('Validation/Ground Truth seg/'+ str(i), color_transform(seg[i,None,:,:,24]), global_step = step)
             writer.add_image('Validation/Predicted seg/'+ str(i), color_transform(preds[i,None,:,:,24]), global_step = step)
@@ -120,33 +133,43 @@ def center_crop(layer, target_size):
         :, diff_y : (diff_y + target_size[0]), diff_x : (diff_x + target_size[1]),  diff_z : (diff_z + target_size[2])
     ]
         
-       
+def load_ckp(ckp_path, net, optimizer):
+    checkpoint = torch.load(ckp_path)
+    net.load_state_dict(checkpoint['state_dict'])
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint['optimizer'])
+    epoch = checkpoint['epoch']
+
+    return net, optimizer, epoch
+    
 c = config.Config_BaselineUnet()
 dir_names = config.Setup_Directories()
 
 # Set up GPU if available    
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 
 #Set up directories
 root_dir = dir_names.root_dir
-experiment_name = 'Experiment_10012021_dmap_secondchan_250_fixedaug'
+experiment_name = 'Experiment_02112021_fourlabels_removedHF_test'
 tfboard_dir = dir_names.tfboard_dir + '/' + experiment_name
 model_dir = dir_names.model_dir + '/' + experiment_name + '/'
 output_dir = dir_names.valout_dir + '/' + experiment_name + '/'
 model_file = model_dir + 'model.pth'
  
-#Network properties
-num_class = 4
+#Network properties - parameters to set (in future make these argparse)
+num_class = 5
 generate_uncertainty = False
 num_groups = 4
 unet_num_levels = 3
 include_second_chan = True   ## Prior flag - include a second input channel for UNet w/ prior or distance map
 unet_in_channels = 1
 unet_init_feature_numbers = 32
+resume_training = False
+load_model = False
 
 # Load model or not. If load model, the modelDir and tfboardDir should have existed. Otherwise they
 # will be created forcefully, wiping off the old one.
-load_model = False
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -169,14 +192,17 @@ else:
     #net=Unet3D_meta_learning.Net(num_classes = num_class)
     net = UNet_wDeepSupervision(num_class = num_class, patch_size = c.segsize,in_channels = unet_in_channels,
                                 num_levels = unet_num_levels,init_feature_number = unet_init_feature_numbers, padding = False)
+    
+    ckp_path = model_dir + 'best_model.pth'
+    net, _, start_epoch = load_ckp(ckp_path, net,None)
 #    net = UNet(num_class = num_class, padding = False, num_levels = 4, init_feature_number = 64)
-    net.load_state_dict(torch.load(model_file, map_location = torch.device(device)))
     net = net.to(device)
     net.eval()
 
 print(net)
+
 #Initialize class to convert labels to color images
-color_transform = Colorize()
+color_transform = Colorize(n = num_class)
     
 # Set up tensor board
 writer = SummaryWriter(tfboard_dir)
@@ -189,7 +215,7 @@ alpha = alpha.to(device)
 weights = torch.ones(num_class)
 weights[0] = 0
 weights = weights.to(device)
-#ignore_index?
+
 #criterion = l.GeneralizedDiceLoss(num_classes=num_class, weight = weights)
 criterion = l.DSCLoss_deepsupervision(weights, alpha = alpha, num_classes = num_class)
 #criterion = torch.nn.CrossEntropyLoss(weights)
@@ -205,10 +231,10 @@ image_dataset = p.ImageDataset_withDMap(csv_file = c.train_val_csv)
 
 """
 DO ONCE UNLESS I NEED TO UPDATE PATCHES
-
+"""
 # Save and genearte patches for datasets
-tp_dir = dir_names.patch_dir + "/training_data"
-vp_dir = dir_names.patch_dir + "/validation_data"
+tp_dir = dir_names.patch_dir + "/training_data_dmap"
+vp_dir = dir_names.patch_dir + "/validation_data_dmap"
 
 c.force_create(tp_dir)
 c.force_create(vp_dir)
@@ -219,33 +245,33 @@ if os.path.exists(dir_names.val_patch_csv):
   
 ##Train/val split determined in the split_data.csv len(image_dataset)
 for i in range(len(image_dataset)):
+    print(i)
     sample = image_dataset[i]
-    
-#     # If I want to include a prior
-#    if include_second_chan:
-#        dmap = sample['second_chan']
-#        # randomly distort segmentation to simulate "warped template"       
-#    else:
-#        dmap = None
      
     if(sample['type'] == 'train'):
         print(sample['type'])
         patches = p.GeneratePatches(sample, patch_size = c.segsize, is_training = True, transform = True, include_second_chan= include_second_chan)
     else:
         patches = p.GeneratePatches(sample, patch_size = c.segsize, is_training = True, transform = False, include_second_chan = include_second_chan)
+"""
+PATCHH GENERATION UP TO HERE
 
-PATCH GENERATION UP TO HERE
-"""      
  
 ###Now create a dataset with the patches
 train_dataset = p.PatchDataset(dir_names.train_patch_csv, include_second_chan)
 val_dataset = p.PatchDataset(dir_names.val_patch_csv, include_second_chan)
 
+if resume_training:
+    ckp_path = model_dir + 'checkpoint.pt'
+    net, optimizer, start_epoch = load_ckp(ckp_path, net, optimizer)
+else:
+    start_epoch = 0
+
 
 # Training loop
 training_loss = 0.0
 
-for epoch in range(c.num_epochs):
+for epoch in range(start_epoch, c.num_epochs):
     
     
     trainloader = DataLoader(train_dataset, batch_size = c.batch_size, shuffle = True, num_workers = c.num_thread)
@@ -253,7 +279,14 @@ for epoch in range(c.num_epochs):
     for j, patch_batched in enumerate(trainloader,0):
         
         img = patch_batched['image'][:,None,...].to(device)
+        
         seg = patch_batched['seg'].to(device)
+        
+        #Combine hippocampus with cortex 
+        if num_class ==5:
+            seg[seg==5] = 1
+        elif num_class == 4:
+            seg[seg==4] = 1
                 
         #Zero the parameter gradients
         optimizer.zero_grad()
@@ -286,13 +319,14 @@ for epoch in range(c.num_epochs):
         if j % 5 == 4: #print every 5 batches
             #Plot images
             plot_images_to_tfboard(img, seg, output, epoch*len(trainloader) + j,
-                                   is_training = True, num_image_to_show = c.num_image_to_show)            
+                                   is_training = True, num_image_to_show = c.num_image_to_show)   
             print('Training loss: [epoch %d,  iter %5d] loss: %.3f lr: %.5f' %(epoch +1, j+1, training_loss/5, scheduler.get_lr()[0]))
             writer.add_scalar('training_loss', training_loss/5, epoch*len(trainloader) + j)
             training_loss = 0.0
             
     
-    ## Validation    
+    ## Validation   
+    best_val_loss = math.inf
     validation_loss = 0
     validation_dsc = 0
     count = 0
@@ -304,9 +338,15 @@ for epoch in range(c.num_epochs):
         for j, patch_batched in enumerate(valloader):
                            
             img = patch_batched['image'][:,None,...].to(device)
-            img = patch_batched['image'].permute(0,4,1,2,3).to(device) #- with generatedeepmedic patches
+            
+            #img = patch_batched['image'].permute(0,4,1,2,3).to(device) #- with generatedeepmedic patches
             seg = patch_batched['seg'].to(device)
 
+            #Combine hippocampus with cortex 
+            if num_class ==5:
+                seg[seg==5] = 1
+            elif num_class == 4:
+                seg[seg==4] = 1
 #            output,_ = net(img) # Pulkit's code outputs w and /wo soft max
             
             if generate_uncertainty:
@@ -352,18 +392,25 @@ for epoch in range(c.num_epochs):
     scheduler.step()
     
     #Save the model at the end of every epoch
-    model_file = model_dir + 'model_' + str(epoch + 1) + '.pth'
-    torch.save(net.state_dict(), model_file)
+    checkpoint = {
+            'epoch': epoch + 1,
+            'state_dict': net.state_dict(),
+            'optimizer': optimizer.state_dict()
+            }
+    
+    f_path = model_dir + 'most_recent_checkpoint.pt'
+    torch.save(checkpoint, f_path)
+    if (validation_loss/count) < best_val_loss:
+        best_model_file = model_dir + 'best_model.pth'
+        shutil.copyfile(f_path, best_model_file)
+        best_val_loss = validation_loss/count
+    
         
 # when predicting, I need to do softmax and argmax
                 
 print('Finished Training')
-
-#Save the model
-model_file = model_dir + 'model.pth'
-torch.save(net.state_dict(), model_file)
-
 writer.close()
+
 
 # Run network on validation set and save outputs. DO a dense sampling of patches for the final validation DSC score
 pad_size = c.half_patch[0]
@@ -376,13 +423,9 @@ with torch.no_grad():
         
             image_id = sample['id']
             print("Generating test patches for ", image_id )
-            
-            if include_second_chan:
-                dmap = sample['second_chan']
-                test_patches = p.GeneratePatches(sample, patch_size = c.test_patch_size, is_training = False, transform =False, second_chan = dmap)
-            else:
-                test_patches = p.GeneratePatches(sample, is_training = False, transform =False, second_chan = None)     
-            
+              
+            test_patches = p.GeneratePatches(sample, patch_size = c.test_patch_size, is_training = False, transform =False, include_second_chan = include_second_chan)
+
             testloader = DataLoader(test_patches, batch_size = c.batch_size, shuffle = False, num_workers = c.num_thread)    
             
             image_shape = sample['image'].shape
@@ -398,7 +441,7 @@ with torch.no_grad():
             for j, patch_batched in enumerate(testloader):
                 
                     print("batch", j)                
-                    img = patch_batched['image'][:,None,...].to(device).squeeze(1)
+                    img = patch_batched['image'][:,None,...].to(device)
                     seg = patch_batched['seg'].to(device)
                     cpts = patch_batched['cpt']
                     
@@ -430,15 +473,17 @@ with torch.no_grad():
                                     
                     ## Assemble image in loop!
                     n, C, hp, wp, dp = probability.shape
+        
 #                    print(probability.shape)
                     half_shape = torch.tensor([hp, wp,dp])/2
-    #                half_shape = half_shape.astype(int)
+                    half_shape = half_shape.int()
+                    
                     hs, ws, ds = half_shape
                     
+                    
                     #for cpt, pred, uncert in zip(list(cpts), list(probability), list(uncertainty)):
+                  
                     for cpt, pred in zip(list(cpts), list(probability)):
-#                        print(cpt)
-#                        print(pred.shape)
                         #if np.sum(pred)/hs/ws/ds < 0.1:
                         prob[:,cpt[0] - hs:cpt[0] + hs, cpt[1] - ws:cpt[1] + ws, cpt[2] - ds:cpt[2] + ds] += pred
                         rep[:,cpt[0] - hs:cpt[0] + hs, cpt[1] - ws:cpt[1] + ws, cpt[2] - ds:cpt[2] + ds] += 1
@@ -473,3 +518,4 @@ with torch.no_grad():
     print("Average validation accuracy is ", sum(gdsc_val)/len(gdsc_val))
     print(gdsc_val)
     print("Standard deviation is ", np.std(gdsc_val))
+"""

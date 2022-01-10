@@ -12,13 +12,13 @@ class Setup_Directories(object):
         self.root_dir = "/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet"
         
         # Directory that contain CNN related files
-        self.code = "/home/sadhana-ravikumar/Documents/Sadhana/UNET_scripts"
+        self.code = "/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_segmentation"
                 
         # csv file that store train/test split
         self.train_val_csv = self.root_dir + "/data_csv/split.csv"
 #        self.final_test_csv = self.root_dir + "/data_csv/split_test.csv"
         #self.final_test_csv = "/home/sadhana-ravikumar/Documents/Sadhana/n4bias_dots/dots_csv.csv"
-        self.final_test_csv = self.root_dir + "/data_csv/test_pulkit.csv"
+        #self.final_test_csv = self.root_dir + "/data_csv/test_pulkit.csv"
         
         # Patch directories
         
@@ -105,17 +105,17 @@ class Config_BaselineUnet(Setup_Directories):
         self.patch_crop_size = 4
         
         ## Learning parameters
-        self.batch_size = 1
+        self.batch_size = 4
         self.shuffle_buffer = 100
         self.learning_rate = 1e-4
         self.step_size = 10
         self.weight_decay = 0.0005
         
         ## Training parameters 
-        self.num_epochs = 15 
+        self.num_epochs =65
         
         # Visualization params
-        self.num_image_to_show = 2
+        self.num_image_to_show = 3
         
         
         # num batch for validation

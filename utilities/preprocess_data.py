@@ -7,7 +7,6 @@ Created on Mon Jan  6 12:23:59 2020
 """
 
 import numpy as np
-import SimpleITK as sitk
 import config_cortex as config
 #import config_srlm as config
 from torch.utils.data import Dataset
@@ -19,7 +18,6 @@ import nibabel as nib
 import csv
 import os.path as osp
 import resample_util
-import torchvision.transforms as transforms
 from numpy import random as rnd
 
 c = config.Config_BaselineUnet()
@@ -40,18 +38,7 @@ def write_patch_to_file(image_patch_list, label_patch_list, sample, cpt_list, se
         
         # standardize patch before writing to file
         image = p.standardize_image(image) 
-        
-        # If there is a prior, then concatenate with image patch as second channel
-#        if second_chan is not None:
-#            print("Extract corresponding patch from prior")
-#            patch_size = image.shape[0]
-#            idx1_sg = cpt[0] - int(patch_size/2)
-#            idx1_cr = cpt[1] - int(patch_size/2)
-#            idx1_ax = cpt[2] - int(patch_size/2)
-#
-#            second_chan_patch = second_chan[idx1_sg:idx1_sg + patch_size, idx1_cr:idx1_cr+patch_size, idx1_ax: idx1_ax + patch_size]            
-            #add prior to image as a second channel
-            #image = np.stack((image, second_chan_patch), axis = -1)
+    
 
         if (sample['type'] == 'train'):
             img_filename = osp.join(dir_names.patch_dir, "training_data","img_"+ str(img_id) + '_' +str(idx) + ".nii.gz")
@@ -65,6 +52,7 @@ def write_patch_to_file(image_patch_list, label_patch_list, sample, cpt_list, se
             csv_file = dir_names.val_patch_csv
         
         nib.save(nib.Nifti1Image(image, sample['affine']), img_filename)
+        nib.save(nib.Nifti1Image(seg, sample['affine']), seg_filename)
         
         if second_chan_patch_list is not None:
             
@@ -436,10 +424,9 @@ class PatchDataset(Dataset):
         if self.include_second_chan:            
             dmap = nib.load(self.image_list.iloc[idx,3])
             dmap = dmap.get_fdata().astype(np.float32)
+            sample = {'image':image, 'seg':seg, 'affine':affine, 'cpt':cpt, 'dmap':dmap}
         else:
-            dmap = None
-    
-        sample = {'image':image, 'seg':seg, 'affine':affine, 'cpt':cpt, 'dmap':dmap}
+            sample = {'image':image, 'seg':seg, 'affine':affine, 'cpt':cpt}
     
         return sample
 
