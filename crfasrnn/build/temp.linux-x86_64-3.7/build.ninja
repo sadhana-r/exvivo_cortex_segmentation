@@ -1,0 +1,21 @@
+ninja_required_version = 1.3
+cxx = c++
+
+cflags = -pthread -B /home/sadhana-ravikumar/anaconda3/envs/tf_gpu/compiler_compat -Wl,--sysroot=/ -Wsign-compare -DNDEBUG -g -fwrapv -O3 -Wall -Wstrict-prototypes -fPIC -I/home/sadhana-ravikumar/anaconda3/envs/tf_gpu/lib/python3.7/site-packages/torch/include -I/home/sadhana-ravikumar/anaconda3/envs/tf_gpu/lib/python3.7/site-packages/torch/include/torch/csrc/api/include -I/home/sadhana-ravikumar/anaconda3/envs/tf_gpu/lib/python3.7/site-packages/torch/include/TH -I/home/sadhana-ravikumar/anaconda3/envs/tf_gpu/lib/python3.7/site-packages/torch/include/THC -I/home/sadhana-ravikumar/anaconda3/envs/tf_gpu/include/python3.7m -c
+post_cflags = -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=permuto_cpp -D_GLIBCXX_USE_CXX11_ABI=0 -std=c++14
+ldflags = 
+
+rule compile
+  command = $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags
+  depfile = $out.d
+  deps = gcc
+
+
+
+build /home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/exvivo_cortex_segmentation/crfasrnn_pytorch/crfasrnn/build/temp.linux-x86_64-3.7/permuto.o: compile /home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/exvivo_cortex_segmentation/crfasrnn_pytorch/crfasrnn/permuto.cpp
+build /home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/exvivo_cortex_segmentation/crfasrnn_pytorch/crfasrnn/build/temp.linux-x86_64-3.7/permutohedral.o: compile /home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/exvivo_cortex_segmentation/crfasrnn_pytorch/crfasrnn/permutohedral.cpp
+
+
+
+
+

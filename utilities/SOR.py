@@ -34,10 +34,12 @@ class Successive_over_relaxation(nn.Module):
     
     def forward(self, image, source_label, sink_label):
                 
+        #reflection_pad = nn.ReflectionPad3d(2)
         im_shape_pad = [x + 2 for x in image.shape]
         image_pad = torch.zeros(im_shape_pad).to(self.device)
         image_pad[1:-1,1:-1,1:-1] = image
         image = image_pad
+        #image = reflection_pad(image)
         
         h,w,d = image.shape
         
@@ -120,16 +122,17 @@ class Successive_over_relaxation(nn.Module):
         
         else:
 #            self.iterations = 0
+            init = init[2:-2,2:-2,2:-2] 
             init = init[1:-1,1:-1,1:-1] 
             return init,None, None
             
         
-#sor = Successive_over_relaxation()
-#file = nib.load('/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/inputs/HNL29_18-L/seg_patch.nii.gz')
-#img = file.get_fdata().astype(np.float32)
-#img = torch.tensor(img)
-#laplace_sol,_,_ = sor(img,2,3)
-#nib.save(nib.Nifti1Image(laplace_sol.numpy(), file.affine),'/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/inputs/HNL29_18-L/test_SOR_torch.nii.gz')
-#
-#            
+sor = Successive_over_relaxation()
+file = nib.load('/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/patch_data/training_data/seg_1115_34.nii.gz')
+img = file.get_fdata().astype(np.float32)
+img = torch.tensor(img)
+laplace_sol,_,_ = sor(img,2,3)
+nib.save(nib.Nifti1Image(laplace_sol.cpu().numpy(), file.affine),'/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/inputs/test115_34_SOR_torch_reflect.nii.gz')
+
+            
               

@@ -5,12 +5,16 @@ Created on Sun Jan  5 11:45:18 2020
 @author: Sadhana
 """
 
+import sys
+sys.path.append('/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet/exvivo_cortex_segmentation/crfasrnn')
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from unet_blocks import DownConv, UpConv,conv3d, UpConv_MG
 from torch.utils.tensorboard import SummaryWriter
 from SOR import Successive_over_relaxation
+from crfrnn import CrfRnn
     
 class UNet(nn.Module):
     
@@ -188,6 +192,35 @@ class UNet_wDeepSupervision(nn.Module):
         return x, predictions, deeps_outputs
     
 
+class UNet_CRFRNN(nn.Module):
+    """
+    CRF-RNN netwprk with UNet backbone. CRF-RNN implementation based on this paper:
+         
+    Conditional Random Fields as Recurrent Neural Networks,
+    S. Zheng, S. Jayasumana, B. Romera-Paredes, V. Vineet, Z. Su, D. Du, C. Huang and P. Torr,
+    ICCV 2015 (https://arxiv.org/abs/1502.03240).
+             
+    https://github.com/sadeepj/crfasrnn_pytorch/
+    
+    """
+    
+    def __init__(self, num_class, patch_size, padding = False, in_channels = 1, init_feature_number = 16, num_levels = 5, norm = 'gn'):
+        super(UNet_CRFRNN, self).__init__()
+    
+        self.unet = UNet_wDeepSupervision(num_class = num_class, patch_size = patch_size,in_channels =in_channels,
+                                num_levels = num_levels,init_feature_number = init_feature_number, padding = False)
+        self.crfrnn = CrfRnn(num_labels = 4, num_iterations = 5)
+
+    def forward(self, x):
+        
+        img = x
+        x, predictions, _ = self.unet(img)
+        
+        x = self.crfrnn(img, x)
+        predictions = F.softmax(input = x, dim = 1 )
+        
+        return x, predictions
+    
 
 class UNet_DistanceRecon(nn.Module):
     
@@ -501,8 +534,8 @@ class MGNet(nn.Module):
 
     
 #input_image =torch.randn(1,1, 96,96,96)
-#net = UNet_DistanceRecon(4, patch_size = (96,96,96), padding = False, num_levels = 3)
+#net = UNet_CRFRNN(4, patch_size = (96,96,96), padding = False, num_levels = 3)
 ##net = UNet(4, padding = False, num_levels = 3)
-#x,_,_, dmap = net(input_image)
-#print(dmap.shape)
+##x,_,_, dmap = net(input_image)
+#x, p = net(input_image)
 #print(x.shape)

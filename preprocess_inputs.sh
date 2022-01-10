@@ -2,26 +2,26 @@
 #$ -S /bin/bash
 set -x -e
 
-ROOT="/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/exvivo_mtl_unet"
-#ROOT='/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet'
+#ROOT="/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/exvivo_mtl_unet"
+ROOT='/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet'
 
 
 INPUTS="$ROOT/inputs"
 DATADIR="$ROOT/data_csv"
 CODEDIR="$ROOT/code"
 
-#SUBJ_TXT=$ROOT/subj_train_fold1.txt
+SUBJ_TXT=$ROOT/subj_train_fold1.txt
 #IND_ALL="$(cat "$SUBJ_TXT")"
 
 function main()
 {
 
   mkdir -p $DATADIR
-  process_inputs all
+  #process_inputs all
   #process_inputs train
   #process_inputs test
 	
-#  Preparation
+  Preparation
 #  PreparationTest
 
 # PreparePulkitData
@@ -82,7 +82,7 @@ function Preparation()
 {
 
   N=$(cat $SUBJ_TXT | wc -l)
-  rm -rf $DATADIR/split.csv
+  rm -rf $DATADIR/split_nosrlm.csv
 
   for ((i=1;i<=${N};i++)); do
 
@@ -91,10 +91,10 @@ function Preparation()
     read dummmy type idint <<< $(cat $SUBJ_TXT | grep $id)
 
     IMG=$INPUTS/mri/${id}_trimmed_img.nii.gz
-    SEG=$INPUTS/seg/${id}_trimmed_phg.nii.gz
+    SEG=$INPUTS/seg/${id}_trimmed_phg_nosrlm.nii.gz
     DMAP=$INPUTS/dmap/${id}_trimmed_dmap.nii.gz
 
-    echo "$IMG,$SEG,$idint,"Control",$type,$DMAP" >> $DATADIR/split.csv
+    echo "$IMG,$SEG,$idint,"Control",$type,$DMAP" >> $DATADIR/split_nosrlm.csv
 
   done
 }
