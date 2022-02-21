@@ -142,14 +142,14 @@ class SuccessiveOverRelaxation(nn.Module):
             return init,None, None
 
 
-sor = successive_over_relaxation()
+sor = SuccessiveOverRelaxation(source = 2, sink = 2)
 file = nib.load('/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/exvivo_mtl_unet/inputs/HNL29_18-L/seg_patch.nii.gz')
 img = file.get_fdata().astype(np.float32)
 img = img[np.newaxis,:]
 img_batch = np.stack([img, img, img], axis = 0)
 
 img_batch = torch.tensor(img_batch)
-laplace_cropped,_,_ = sor(img_batch,2,3)
+laplace_cropped,_,_ = sor(img_batch)
 laplace_sol = laplace_cropped[0,0,:,:,:]
 nib.save(nib.Nifti1Image(laplace_sol.numpy(), file.affine),'/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/exvivo_mtl_unet/test_SOR_torch_batch.nii.gz')
 

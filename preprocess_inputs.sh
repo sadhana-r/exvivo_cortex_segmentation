@@ -2,10 +2,10 @@
 #$ -S /bin/bash
 set -x -e
 
-#ROOT="/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/exvivo_mtl_unet"
-ROOT='/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet'
+ROOT="/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/exvivo_mtl_unet"
+#ROOT='/home/sadhana-ravikumar/Documents/Sadhana/exvivo_cortex_unet'
 
-
+ATLAS_DIR="/Users/sravikumar/Box Sync/PennPhD/Research/PICSL/atlasPHG2019/inputs"
 INPUTS="$ROOT/inputs"
 DATADIR="$ROOT/data_csv"
 CODEDIR="$ROOT/code"
@@ -17,7 +17,7 @@ function main()
 {
 
   mkdir -p $DATADIR
-  #process_inputs all
+  process_inputs all
   #process_inputs train
   #process_inputs test
 	
@@ -45,22 +45,36 @@ function process_inputs()
 	WDIR=$ROOT/preproc_${mode}_${N}
 	mkdir -p "$WDIR"
   	mkdir -p "$WDIR/mri" "$WDIR/dmap" "$WDIR/seg" "$WDIR/intermediate" "$WDIR/seg_nosrlm"
+	mkdir -p "$WDIR/mri_raw" "$WDIR/seg_raw" "$WDIR/seg_atlas"
 
 	#echo "Normalizing image for  $id"
 	IMG=$INPUTS/${id}/${id}_clip_n4.nii.gz
 	SEG=$INPUTS/${id}/${id}_multilabel_corrected_seg_whippo.nii.gz
 	DMAP=$INPUTS/${id}/${id}_coords-IO.nii.gz
 	SRLM_SEG=$INPUTS/${id}/${id}_axisalign_srlm_sr.nii.gz
+        ATLAS_SEG=$ATLAS_DIR/${id}/${id}_axisalign_phg_cs_v2.nii.gz
+
+       if [[ ! -f $ATLAS_SEG ]];then
+		ATLAS_SEG=$ATLAS_DIR/${id}/${id}_axisalign_phg_cs.nii.gz
+       fi
 
  	IMG_TRIM=$WDIR/mri/${id}_trimmed_img.nii.gz
 	SEG_TRIM=$WDIR/seg/${id}_trimmed_phg.nii.gz
 	SEG_NOSRLM_TRIM=$WDIR/seg_nosrlm/${id}_trimmed_phg_nosrlm.nii.gz
 	DMAP_TRIM=$WDIR/dmap/${id}_trimmed_dmap.nii.gz
 	SEG_COMB=$WDIR/intermediate/${id}_multilabel_wsrlm.nii.gz
+	SEG_ATLAS=$WDIR/seg_atlas/${id}_phg.nii.gz
 
 	#Combine srlm with multilabel seg
-  	c3d "$SEG" -replace 4 5 1 7 -as MS "$SRLM_SEG" -add -replace 6 4 8 4 7 1 -o "$SEG_COMB"
+  	#c3d "$SEG" -replace 4 5 1 7 -as MS "$SRLM_SEG" -add -replace 6 4 8 4 7 1 -o "$SEG_COMB"
 
+        ln -sf "$IMG" "$WDIR/mri_raw/${id}_img.nii.gz"
+        ln -sf "$SEG_COMB" "$WDIR/seg_raw/${id}_phg.nii.gz"
+
+        c3d "$ATLAS_SEG" -replace 2 1 4 5 3 5 -retain-labels 5 -as LAT \
+         "$SEG_COMB" -replace 4 1 5 1 -thresh 1 1 1 0 -push LAT -times "$SEG_COMB" -add -o "$SEG_ATLAS"
+
+<<"DONE"
       #Trim input image to only contain segmented region
 	c3d "$SEG_COMB" -trim 0vox -o "$SEG_TRIM" -thresh -inf inf 1 0 -popas MASK "$IMG" \
 	-push MASK -reslice-identity -as R "$IMG" -add -push R -times -trim 0vox \
@@ -73,6 +87,7 @@ function process_inputs()
   #	c3d $IMG_TRIM -resample 75% -o $INPUTS/${id}/${id}_downsample_img.nii.gz
   #	c3d $SEG_TRIM -resample 75% -o $INPUTS/${id}/${id}_downsample_phg.nii.gz
 	# Post processing to visualize test results
+DONE
 
   done
 }
